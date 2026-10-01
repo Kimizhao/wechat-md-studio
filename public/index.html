@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>微信公众号排版</title>
+<style>
+  :root {
+    --bg: #f2f4f7;
+    --panel: #ffffff;
+    --border: #e3e6ea;
+    --border-soft: #eef1f5;
+    --text: #1f2329;
+    --muted: #6b7280;
+    --accent: #3b6ef6;
+    --accent-soft: #eef3ff;
+    --radius: 8px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  button { font: inherit; color: inherit; }
+
+  /* ---------- 菜单栏 ---------- */
+  .menubar {
+    flex: none; display: flex; align-items: center; gap: 14px;
+    height: 46px; padding: 0 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: relative; z-index: 20;
+  }
+  .brand { font-weight: 600; font-size: 14px; white-space: nowrap; }
+  .brand span { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 7px; }
+
+  .menus { display: flex; align-items: center; gap: 1px; position: relative; }
+  .menu { position: relative; }
+  .menu-trigger {
+    border: none; background: transparent; cursor: pointer;
+    padding: 6px 11px; border-radius: 6px; font-size: 13.5px; color: #3c4450;
+    white-space: nowrap;
+  }
+  .menu-trigger:hover { background: #f2f4f8; }
+  .menu.open .menu-trigger { background: var(--accent); color: #fff; }
+
+  .menu-panel {
+    display: none; position: absolute; top: calc(100% + 6px); left: 0;
+    min-width: 232px; padding: 6px;
+    max-height: calc(100vh - 96px); overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 12px 32px rgba(16,24,40,.14);
+  }
+  .menu.open .menu-panel { display: block; }
+  .menu-panel.wide { min-width: 268px; }
+
+  .menu-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 7px 10px; border: none; background: transparent; cursor: pointer;
+    border-radius: 6px; font-size: 13.5px; text-align: left; color: #2c3440;
+  }
+  .menu-item:hover { background: var(--accent-soft); color: #1b4dd8; }
+  .menu-item .shortcut { margin-left: auto; color: var(--muted); font-size: 12px; letter-spacing: .5px; }
+  .menu-item .check { width: 14px; color: var(--accent); font-size: 12px; }
+  .menu-sep { height: 1px; margin: 5px 8px; background: var(--border-soft); }
+  .menu-label {
+    padding: 7px 10px 3px; font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .6px;
+  }
+
+  .menu-fields { display: grid; gap: 9px; padding: 6px 10px 10px; }
+  .menu-fields .field { display: flex; align-items: center; gap: 10px; }
+  .menu-fields .field label { flex: none; width: 62px; color: var(--muted); font-size: 12.5px; }
+  .menu-fields select {
+    flex: 1; min-width: 0; padding: 5px 8px; font: inherit; font-size: 13px;
+    color: inherit; background: #fff;
+    border: 1px solid var(--border); border-radius: 6px; outline: none;
+  }
+  .menu-fields select:focus { border-color: var(--accent); }
+
+  .actions { margin-left: auto; display: flex; gap: 8px; flex: none; }
+  .actions button {
+    padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border);
+    background: #fff; cursor: pointer; white-space: nowrap;
+    transition: background .15s, border-color .15s;
+  }
+  .actions button:hover { background: #f3f5f8; }
+  .actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .actions button.primary:hover { background: #2f5fe0; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+
+  /* ---------- 主体 ---------- */
+  .split { flex: 1; display: grid; grid-template-columns: 1fr 6px 1fr; min-height: 0; }
+  .divider { cursor: col-resize; background: var(--border); }
+  .divider:hover { background: var(--accent); }
+  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
+  #editor { flex: 1; min-height: 0; overflow: hidden; }
+  #editor .cm-editor { height: 100%; }
+  .preview-wrap { flex: 1; overflow: auto; background: #eef0f3; padding: 20px 0; }
+  #preview {
+    display: block; width: 100%; max-width: 420px; margin: 0 auto;
+    min-height: 100%; border: none; background: transparent;
+  }
+
+  /* ---------- 状态栏 ---------- */
+  .statusbar {
+    flex: none; display: flex; gap: 16px; align-items: center;
+    padding: 6px 16px; font-size: 12px; color: var(--muted);
+    background: var(--panel); border-top: 1px solid var(--border);
+  }
+  .statusbar .right { margin-left: 0; }
+  .statusbar .spacer { margin-left: auto; }
+  .statusbar b { color: #4a5361; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 弹窗 ---------- */
+  dialog {
+    border: none; border-radius: 12px; padding: 0; width: min(520px, 92vw);
+    box-shadow: 0 16px 48px rgba(0,0,0,.18);
+    color: var(--text);
+  }
+  dialog.wide { width: min(680px, 94vw); }
+  dialog::backdrop { background: rgba(15,18,22,.42); }
+  .dlg-head { padding: 16px 20px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  .dlg-body { padding: 16px 20px; display: grid; gap: 12px; max-height: 64vh; overflow: auto; }
+  .dlg-body .row { display: grid; gap: 5px; }
+  .dlg-body .row label { font-size: 12px; color: var(--muted); }
+  .dlg-body input {
+    width: 100%; padding: 6px 9px; font: inherit; color: inherit;
+    border: 1px solid var(--border); border-radius: 6px; outline: none;
+  }
+  .dlg-body input:focus { border-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .hint a { color: var(--accent); }
+  .dlg-foot {
+    padding: 14px 20px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  .dlg-foot button {
+    padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border);
+    background: #fff; cursor: pointer;
+  }
+  .dlg-foot button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  table.doc { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.doc th, table.doc td {
+    text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border-soft);
+    vertical-align: top;
+  }
+  table.doc th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  table.doc code {
+    font-family: var(--mono); font-size: 12px; background: #f2f4f7;
+    padding: 1px 5px; border-radius: 4px; color: #c0392b;
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+    background: #1f2329; color: #fff; padding: 9px 18px; border-radius: 8px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: all .22s;
+    max-width: 70vw; z-index: 99;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #c0392b; }
+</style>
+</head>
+<body>
+
+<header class="menubar">
+  <div class="brand">公众号排版<span>Markdown → 微信</span></div>
+
+  <nav class="menus" id="menus">
+    <div class="menu">
+      <button class="menu-trigger" type="button">文件</button>
+      <div class="menu-panel">
+        <button class="menu-item" type="button" data-action="new">新建文档</button>
+        <button class="menu-item" type="button" data-action="import">导入 Markdown…</button>
+        <button class="menu-item" type="button" data-action="export">导出 Markdown</button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" type="button" data-action="copy">
+          复制到公众号<span class="shortcut">⌘S</span>
+        </button>
+        <button class="menu-item" type="button" data-action="draft">推送草稿…</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menu-trigger" type="button">编辑</button>
+      <div class="menu-panel">
+        <button class="menu-item" type="button" data-cmd="undo">撤销<span class="shortcut">⌘Z</span></button>
+        <button class="menu-item" type="button" data-cmd="redo">重做<span class="shortcut">⇧⌘Z</span></button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" type="button" data-cmd="selectAll">全选<span class="shortcut">⌘A</span></button>
+        <button class="menu-item" type="button" data-cmd="find">查找替换<span class="shortcut">⌘F</span></button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" type="button" data-cmd="clear">清空内容</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menu-trigger" type="button">格式</button>
+      <div class="menu-panel wide">
+        <button class="menu-item" type="button" data-cmd="bold">加粗<span class="shortcut">⌘B</span></button>
+        <button class="menu-item" type="button" data-cmd="italic">斜体<span class="shortcut">⌘I</span></button>
+        <button class="menu-item" type="button" data-cmd="strike">删除线<span class="shortcut">⌘D</span></button>
+        <button class="menu-item" type="button" data-cmd="code">行内代码<span class="shortcut">⌘E</span></button>
+        <button class="menu-item" type="button" data-cmd="link">超链接<span class="shortcut">⌘K</span></button>
+        <div class="menu-sep"></div>
+        <div class="menu-label">标题</div>
+        <button class="menu-item" type="button" data-cmd="h1">标题 1<span class="shortcut">⌘1</span></button>
+        <button class="menu-item" type="button" data-cmd="h2">标题 2<span class="shortcut">⌘2</span></button>
+        <button class="menu-item" type="button" data-cmd="h3">标题 3<span class="shortcut">⌘3</span></button>
+        <button class="menu-item" type="button" data-cmd="h4">标题 4<span class="shortcut">⌘4</span></button>
+        <button class="menu-item" type="button" data-cmd="h5">标题 5<span class="shortcut">⌘5</span></button>
+        <button class="menu-item" type="button" data-cmd="h6">标题 6<span class="shortcut">⌘6</span></button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" type="button" data-cmd="quote">引用<span class="shortcut">⌥⌘Q</span></button>
+        <button class="menu-item" type="button" data-cmd="bullet">无序列表<span class="shortcut">⌥⌘U</span></button>
+        <button class="menu-item" type="button" data-cmd="ordered">有序列表<span class="shortcut">⌥⌘O</span></button>
+        <button class="menu-item" type="button" data-cmd="task">任务列表</button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" type="button" data-cmd="hr">分割线</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menu-trigger" type="button">插入</button>
+      <div class="menu-panel">
+        <button class="menu-item" type="button" data-cmd="image">图片</button>
+        <button class="menu-item" type="button" data-cmd="table">表格</button>
+        <button class="menu-item" type="button" data-cmd="codeblock">代码块<span class="shortcut">⌥⌘C</span></button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menu-trigger" type="button">样式</button>
+      <div class="menu-panel wide">
+        <div class="menu-fields">
+          <div class="field"><label for="theme">主题</label><select id="theme"></select></div>
+          <div class="field"><label for="fontSize">字号</label>
+            <select id="fontSize">
+              <option value="small">小</option>
+              <option value="medium" selected>中</option>
+              <option value="large">大</option>
+            </select>
+          </div>
+          <div class="field"><label for="background">背景</label>
+            <select id="background">
+              <option value="default" selected>主题自带</option>
+              <option value="grid">网格纹理</option>
+              <option value="none">透明</option>
+            </select>
+          </div>
+          <div class="field"><label for="codeTheme">代码主题</label><select id="codeTheme"></select></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menu-trigger" type="button">帮助</button>
+      <div class="menu-panel">
+        <button class="menu-item" type="button" data-topic="shortcuts">快捷键</button>
+        <button class="menu-item" type="button" data-topic="syntax">Markdown 语法</button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" type="button" data-topic="about">关于</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="actions">
+    <button id="btnCopy" type="button">复制</button>
+    <button id="btnDraft" type="button" class="primary">发布</button>
+  </div>
+</header>
+
+<main class="split">
+  <section class="pane"><div id="editor"></div></section>
+  <div class="divider" id="divider"></div>
+  <section class="pane">
+    <div class="preview-wrap"><iframe id="preview" title="预览"></iframe></div>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <span id="statCursor">第 <b>1</b> 行，第 <b>1</b> 列</span>
+  <span id="statSelected"></span>
+  <span id="statWords"><b>0</b> 字</span>
+  <span id="statRead">约 <b>1</b> 分钟</span>
+  <span class="spacer"></span>
+  <span id="statTheme">—</span>
+  <span id="statStatus">就绪</span>
+</footer>
+
+<input type="file" id="fileInput" accept=".md,.markdown,.txt,text/markdown" hidden>
+
+<dialog id="draftDialog">
+  <div class="dlg-head">推送到公众号草稿箱</div>
+  <div class="dlg-body">
+    <div class="hint">
+      需要公众号的 AppID / AppSecret，且本机公网 IP 已加入公众号后台的 IP 白名单。
+      <a href="#" id="linkIp">查看本机公网 IP</a>
+    </div>
+    <div class="row"><label for="dAppId">AppID</label><input id="dAppId" type="text" autocomplete="off"></div>
+    <div class="row"><label for="dAppSecret">AppSecret</label><input id="dAppSecret" type="password" autocomplete="off"></div>
+    <div class="row"><label for="dTitle">标题（必填，公众号最多 64 字）</label><input id="dTitle" type="text"></div>
+    <div class="row"><label for="dAuthor">作者</label><input id="dAuthor" type="text"></div>
+    <div class="row"><label for="dDigest">摘要（留空由微信自动截取）</label><input id="dDigest" type="text"></div>
+    <div class="row"><label for="dCover">封面图 URL（留空则取正文第一张图）</label><input id="dCover" type="text"></div>
+    <div class="row"><label for="dSource">原文链接</label><input id="dSource" type="text"></div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" id="btnDraftCancel">取消</button>
+    <button type="button" class="primary" id="btnDraftSubmit">创建草稿</button>
+  </div>
+</dialog>
+
+<dialog id="infoDialog" class="wide">
+  <div class="dlg-head" id="infoTitle"></div>
+  <div class="dlg-body" id="infoBody"></div>
+  <div class="dlg-foot"><button type="button" id="btnInfoClose">关闭</button></div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/editor.js"></script>
+<script>
+const $ = id => document.getElementById(id)
+const SAMPLE = `# 把知识，写成值得读完的文章
+
+一份内容，从清楚的结构开始。**让好的观点，被认真看见。**
+
+## 为什么需要专门的排版
+
+微信后台会过滤掉 \`<style>\`、\`class\`、\`id\`，只认行内 \`style\`，
+而且会丢弃 \`var()\` 和 \`calc()\`。所以不能简单地把 Markdown 转成 HTML 就粘过去。
+
+> 先把内容讲清楚，再让形式为它服务。
+
+### 三种常见做法
+
+1. 手工逐段点样式
+2. 用浏览器插件注入
+3. 服务端渲染成内联样式 HTML
+
+- 结构清楚
+- 阅读自然
+- 复制即用
+
+### 代码
+
+行内代码 \`print("hello")\` 长这样。
+
+\`\`\`python
+def convert(markdown: str, theme: str = "default") -> str:
+    """把 Markdown 转成微信可用的 HTML"""
+    return init_renderer().render(markdown)
+\`\`\`
+
+### 表格
+
+| 主题系列 | 数量 | 版式特征 |
+| --- | --- | --- |
+| Minimal | 8 | 无装饰，纯色文字 |
+| Focus | 8 | 居中对称，双横线 |
+| Elegant | 8 | 左边框递减 + 渐变 |
+| Bold | 8 | 满底色圆角投影 |
+
+---
+
+**加粗**、*斜体*、~~删除线~~、[链接](https://mp.weixin.qq.com/) 都要正常。
+`
+
+const STORE_KEY = 'md2wechat-studio:prefs'
+
+let currentHtml = ''
+let currentPlain = ''
+let timer = null
+let themeMeta = {}
+let editor = null
+
+/* ---------- 提示 ---------- */
+let toastTimer
+function toast(message, isError) {
+  const el = $('toast')
+  el.textContent = message
+  el.classList.toggle('error', Boolean(isError))
+  el.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => el.classList.remove('show'), isError ? 5200 : 2400)
+}
+
+function setStatus(text) { $('statStatus').textContent = text }
+
+/* ---------- 菜单栏 ---------- */
+let openMenu = null
+function closeMenu() {
+  if (openMenu) openMenu.classList.remove('open')
+  openMenu = null
+}
+
+const menus = $('menus')
+menus.addEventListener('click', (event) => {
+  const trigger = event.target.closest('.menu-trigger')
+  if (trigger) {
+    const menu = trigger.parentElement
+    const wasOpen = menu === openMenu
+    closeMenu()
+    if (!wasOpen) { menu.classList.add('open'); openMenu = menu }
+    return
+  }
+  const item = event.target.closest('.menu-item')
+  if (item) {
+    closeMenu()
+    if (item.dataset.cmd) editor.exec(item.dataset.cmd)
+    else if (item.dataset.action) actions[item.dataset.action]()
+    else if (item.dataset.topic) showInfo(item.dataset.topic)
+  }
+})
+for (const menu of menus.querySelectorAll('.menu')) {
+  menu.addEventListener('mouseenter', () => {
+    if (openMenu && openMenu !== menu) {
+      closeMenu()
+      menu.classList.add('open')
+      openMenu = menu
+    }
+  })
+}
+document.addEventListener('click', (event) => { if (!menus.contains(event.target)) closeMenu() })
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMenu() })
+
+/* ---------- 帮助文档 ---------- */
+const INFO = {
+  shortcuts: {
+    title: '快捷键',
+    body: `<table class="doc">
+      <tr><th>排版</th><th></th><th>块级</th><th></th></tr>
+      <tr><td>加粗</td><td><code>⌘B</code></td><td>标题 1–6</td><td><code>⌘1</code>…<code>⌘6</code></td></tr>
+      <tr><td>斜体</td><td><code>⌘I</code></td><td>引用</td><td><code>⌥⌘Q</code></td></tr>
+      <tr><td>删除线</td><td><code>⌘D</code></td><td>无序列表</td><td><code>⌥⌘U</code></td></tr>
+      <tr><td>行内代码</td><td><code>⌘E</code></td><td>有序列表</td><td><code>⌥⌘O</code></td></tr>
+      <tr><td>超链接</td><td><code>⌘K</code></td><td>代码块</td><td><code>⌥⌘C</code></td></tr>
+      <tr><td>撤销 / 重做</td><td><code>⌘Z</code> / <code>⇧⌘Z</code></td><td>全选</td><td><code>⌘A</code></td></tr>
+      <tr><td>查找替换</td><td><code>⌘F</code></td><td>复制到公众号</td><td><code>⌘S</code></td></tr>
+      <tr><td>缩进</td><td><code>Tab</code></td><td>折叠</td><td><code>⌘⇧[</code></td></tr>
+    </table>
+    <p class="hint">
+      浏览器会优先拦截 <code>⌘1</code>~<code>⌘9</code>（切换标签页），
+      如果标题快捷键没反应，请用 <code>⌥⌘数字</code>，或直接从「格式」菜单里点。
+      Windows / Linux 上把 <code>⌘</code> 换成 <code>Ctrl</code>、<code>⌥</code> 换成 <code>Alt</code>。
+    </p>`,
+  },
+  syntax: {
+    title: 'Markdown 语法',
+    body: `<table class="doc">
+      <tr><th>效果</th><th>写法</th></tr>
+      <tr><td>标题</td><td><code># 一级</code>　<code>## 二级</code>　…　<code>###### 六级</code></td></tr>
+      <tr><td>加粗 / 斜体</td><td><code>**粗体**</code>　<code>*斜体*</code>　<code>~~删除线~~</code></td></tr>
+      <tr><td>引用</td><td><code>&gt; 引用内容</code></td></tr>
+      <tr><td>无序 / 有序列表</td><td><code>- 项目</code>　<code>1. 项目</code></td></tr>
+      <tr><td>任务列表</td><td><code>- [ ] 待办</code>　<code>- [x] 已完成</code></td></tr>
+      <tr><td>链接 / 图片</td><td><code>[文字](https://…)</code>　<code>![描述](图片地址)</code></td></tr>
+      <tr><td>行内代码 / 代码块</td><td><code>\`code\`</code>　<code>\`\`\`python</code> 换行后写代码</td></tr>
+      <tr><td>表格</td><td><code>| 列 A | 列 B |</code> 换行 <code>| --- | --- |</code></td></tr>
+      <tr><td>分割线</td><td><code>---</code></td></tr>
+      <tr><td>脚注</td><td><code>文字[^1]</code> 换行 <code>[^1]: 说明</code></td></tr>
+    </table>`,
+  },
+  about: {
+    title: '关于',
+    body: `<p class="hint">
+      自建的微信公众号 Markdown 排版服务：本地编辑器实时预览，
+      由服务端把 Markdown 渲染成微信后台认得的<b>全内联样式 HTML</b>，
+      再复制粘贴或直接推送到公众号草稿箱。
+    </p>
+    <p class="hint">
+      微信后台会过滤 <code>&lt;style&gt;</code>、<code>class</code>、<code>id</code>，
+      并丢弃 <code>var()</code> 与 <code>calc()</code>，
+      所以主题样式必须逐个内联到元素上——这也是这个服务存在的理由。
+    </p>
+    <p class="hint">渲染内核移植自 <code>doocs/md</code>（WTFPL），共 48 套主题。</p>`,
+  },
+}
+
+function showInfo(topic) {
+  const info = INFO[topic]
+  if (!info) return
+  $('infoTitle').textContent = info.title
+  $('infoBody').innerHTML = info.body
+  $('infoDialog').showModal()
+}
+$('btnInfoClose').addEventListener('click', () => $('infoDialog').close())
+
+/* ---------- 文件操作 ---------- */
+function currentTitle() {
+  const matched = currentPlain.match(/^#\s+(.+)$/m)
+  return matched ? matched[1].trim().slice(0, 64) : ''
+}
+
+const actions = {
+  new() {
+    const text = editor.getValue().trim()
+    if (text && !window.confirm('新建会清空当前内容，确定继续？')) return
+    editor.setValue('')
+    editor.focus()
+  },
+  import() { $('fileInput').click() },
+  export() {
+    const blob = new Blob([editor.getValue()], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${currentTitle() || '未命名文档'}.md`
+    link.click()
+    URL.revokeObjectURL(url)
+  },
+  copy: copyToWeChat,
+  draft: openDraft,
+}
+
+$('fileInput').addEventListener('change', async (event) => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  editor.setValue(await file.text())
+  editor.focus()
+  toast(`已导入 ${file.name}`)
+})
+
+/* ---------- 初始化 ---------- */
+async function bootstrap() {
+  const [themes, codeThemes] = await Promise.all([
+    fetch('/api/themes').then(r => r.json()),
+    fetch('/api/code-themes').then(r => r.json()).catch(() => ({ data: { themes: [], default: 'github' } })),
+  ])
+
+  const groups = {}
+  for (const theme of themes.data.themes) {
+    themeMeta[theme.name] = theme
+    ;(groups[theme.series] ||= []).push(theme)
+  }
+  const seriesLabels = {
+    basic: '基础主题', minimal: '极简系列', focus: '聚焦系列',
+    elegant: '优雅系列', bold: '醒目系列', featured: '精选主题',
+  }
+  const themeSelect = $('theme')
+  for (const [series, items] of Object.entries(groups)) {
+    const group = document.createElement('optgroup')
+    group.label = seriesLabels[series] || series
+    for (const theme of items) {
+      const option = document.createElement('option')
+      option.value = theme.name
+      option.textContent = theme.label
+      group.appendChild(option)
+    }
+    themeSelect.appendChild(group)
+  }
+
+  const codeSelect = $('codeTheme')
+  const followTheme = document.createElement('option')
+  followTheme.value = ''
+  followTheme.textContent = '跟随主题'
+  codeSelect.appendChild(followTheme)
+  for (const name of codeThemes.data.themes) {
+    const option = document.createElement('option')
+    option.value = name
+    option.textContent = name
+    codeSelect.appendChild(option)
+  }
+
+  const saved = restore()
+  editor = window.MDEditor.mount({
+    parent: $('editor'),
+    doc: saved.markdown ?? SAMPLE,
+    onChange: scheduleRender,
+    onCursor: paintCursor,
+  })
+  paintCursor(editor.cursor())
+  render()
+}
+
+/* ---------- 偏好持久化 ---------- */
+function persist() {
+  localStorage.setItem(STORE_KEY, JSON.stringify({
+    markdown: editor.getValue(),
+    theme: $('theme').value,
+    fontSize: $('fontSize').value,
+    background: $('background').value,
+    codeTheme: $('codeTheme').value,
+    appId: $('dAppId').value,
+    author: $('dAuthor').value,
+  }))
+}
+function restore() {
+  let saved = {}
+  try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') } catch {}
+  if (saved.theme && themeMeta[saved.theme]) $('theme').value = saved.theme
+  if (saved.fontSize) $('fontSize').value = saved.fontSize
+  if (saved.background) $('background').value = saved.background
+  if (saved.codeTheme) $('codeTheme').value = saved.codeTheme
+  if (saved.appId) $('dAppId').value = saved.appId
+  if (saved.author) $('dAuthor').value = saved.author
+  return saved
+}
+
+/* ---------- 状态栏 ---------- */
+function paintCursor({ line, column, selected }) {
+  $('statCursor').innerHTML = `第 <b>${line}</b> 行，第 <b>${column}</b> 列`
+  $('statSelected').textContent = selected ? `已选 ${selected} 字符` : ''
+}
+
+/* ---------- 预览 ---------- */
+function scheduleRender() {
+  clearTimeout(timer)
+  timer = setTimeout(render, 260)
+  setStatus('输入中…')
+}
+
+async function render() {
+  const body = {
+    markdown: editor.getValue(),
+    theme: $('theme').value,
+    fontSize: $('fontSize').value,
+    backgroundType: $('background').value,
+    codeTheme: $('codeTheme').value || undefined,
+  }
+
+  setStatus('渲染中…')
+  try {
+    const response = await fetch('/api/convert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const payload = await response.json()
+    if (payload.code !== 0) throw new Error(payload.msg)
+
+    const data = payload.data
+    currentHtml = data.html
+    currentPlain = body.markdown
+    paintPreview(data.html, themeMeta[data.theme])
+
+    $('statTheme').textContent = themeMeta[data.theme]?.label ?? data.theme
+    $('statWords').innerHTML = `<b>${data.wordCount}</b> 字`
+    $('statRead').innerHTML = `约 <b>${data.estimatedReadTime}</b> 分钟`
+    setStatus('就绪')
+    persist()
+  } catch (error) {
+    setStatus('渲染失败')
+    toast(`渲染失败：${error.message}`, true)
+  }
+}
+
+function paintPreview(html, meta) {
+  const frame = $('preview')
+  // min-width:0 是必须的：flex 子项默认 min-width:auto，会被宽代码块撑开，
+  // 居中对齐时两侧会被裁掉（左侧内容直接看不见）。
+  frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;padding:0;background:transparent;}
+    body{display:flex;justify-content:center;}
+    body>*{min-width:0;}
+    pre{overflow-x:auto;}
+  </style></head><body>${html}</body></html>`
+  frame.style.background = meta?.background || '#ffffff'
+  frame.style.borderRadius = '10px'
+  frame.style.boxShadow = '0 2px 14px rgba(15,18,22,.10)'
+}
+
+/* ---------- 复制到公众号 ---------- */
+async function copyToWeChat() {
+  if (!currentHtml) return toast('还没有可复制的内容', true)
+  const htmlBlob = new Blob([currentHtml], { type: 'text/html' })
+  const textBlob = new Blob([currentPlain], { type: 'text/plain' })
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob })])
+    toast('已复制，去公众号后台粘贴即可保留排版')
+  } catch (error) {
+    // 降级：浏览器不支持写入 text/html 时退回纯文本
+    try {
+      await navigator.clipboard.writeText(currentPlain)
+      toast('当前浏览器不支持富文本复制，已复制纯文本', true)
+    } catch {
+      toast(`复制失败：${error.message}`, true)
+    }
+  }
+}
+
+/* ---------- 推送草稿 ---------- */
+function openDraft() {
+  if (!$('dTitle').value) $('dTitle').value = currentTitle()
+  $('draftDialog').showModal()
+}
+
+async function submitDraft() {
+  const payload = {
+    appId: $('dAppId').value.trim(),
+    appSecret: $('dAppSecret').value.trim(),
+    title: $('dTitle').value.trim(),
+    author: $('dAuthor').value.trim(),
+    digest: $('dDigest').value.trim(),
+    coverImageUrl: $('dCover').value.trim(),
+    contentSourceUrl: $('dSource').value.trim(),
+    markdown: editor.getValue(),
+    theme: $('theme').value,
+    fontSize: $('fontSize').value,
+    backgroundType: $('background').value,
+    codeTheme: $('codeTheme').value || undefined,
+  }
+  if (!payload.appId || !payload.appSecret) return toast('请填写 AppID 和 AppSecret', true)
+  if (!payload.title) return toast('请填写标题', true)
+
+  const button = $('btnDraftSubmit')
+  button.disabled = true
+  button.textContent = '推送中…'
+  setStatus('正在上传图片并创建草稿…')
+  try {
+    const response = await fetch('/api/wechat/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json()
+    if (result.code !== 0) throw new Error(result.msg)
+    const data = result.data
+    toast(`草稿已创建（图片 ${data.uploadedImages} 张${data.failedImages.length ? `，失败 ${data.failedImages.length} 张` : ''}）。去公众号后台「草稿箱」查看。`)
+    $('draftDialog').close()
+    persist()
+  } catch (error) {
+    toast(`推送失败：${error.message}`, true)
+  } finally {
+    button.disabled = false
+    button.textContent = '创建草稿'
+    setStatus('就绪')
+  }
+}
+
+/* ---------- 事件绑定 ---------- */
+$('btnCopy').addEventListener('click', copyToWeChat)
+$('btnDraft').addEventListener('click', openDraft)
+$('btnDraftCancel').addEventListener('click', () => $('draftDialog').close())
+$('btnDraftSubmit').addEventListener('click', submitDraft)
+$('linkIp').addEventListener('click', async (event) => {
+  event.preventDefault()
+  const response = await fetch('/api/wechat/ip').then(r => r.json())
+  toast(response.data?.ip ? `本机公网 IP：${response.data.ip}（加到公众号后台 IP 白名单）` : '无法获取公网 IP', !response.data?.ip)
+})
+for (const id of ['theme', 'fontSize', 'background', 'codeTheme'])
+  $(id).addEventListener('change', render)
+for (const id of ['dAppId', 'dAuthor'])
+  $(id).addEventListener('change', persist)
+
+// ⌘/Ctrl + S 复制到公众号
+document.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+    event.preventDefault()
+    copyToWeChat()
+  }
+})
+
+// 拖动分栏
+;(() => {
+  const divider = $('divider')
+  const split = document.querySelector('.split')
+  let dragging = false
+  divider.addEventListener('mousedown', () => { dragging = true; document.body.style.userSelect = 'none' })
+  window.addEventListener('mouseup', () => { dragging = false; document.body.style.userSelect = '' })
+  window.addEventListener('mousemove', (event) => {
+    if (!dragging) return
+    const ratio = Math.min(0.85, Math.max(0.15, event.clientX / window.innerWidth))
+    split.style.gridTemplateColumns = `${ratio}fr 6px ${1 - ratio}fr`
+  })
+})()
+
+bootstrap().catch(error => toast(`初始化失败：${error.message}`, true))
+</script>
+</body>
+</html>
