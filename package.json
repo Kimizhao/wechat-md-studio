@@ -15,6 +15,14 @@
   ],
   "license": "MIT",
   "author": "zhaozh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kimizhao/wechat-md-studio.git"
+  },
+  "homepage": "https://github.com/Kimizhao/wechat-md-studio#readme",
+  "bugs": {
+    "url": "https://github.com/Kimizhao/wechat-md-studio/issues"
+  },
   "packageManager": "pnpm@12.8.1",
   "engines": {
     "node": ">=22"
