@@ -75,6 +75,8 @@ const targets = [
     platform: `node`,
     format: `esm`,
     external: true,
+    // 可执行入口：加 shebang + 置可执行位，方便 ./dist/cli-convert.js 直接跑
+    bin: true,
   },
   {
     label: `编辑器`,
@@ -102,9 +104,13 @@ for (const target of targets) {
     packages: target.external ? `external` : undefined,
     plugins: target.external ? [rawPlugin, vendorPlugin] : [],
     banner: target.platform === `node`
-      ? { js: `import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);` }
+      ? { js: `${target.bin ? `#!/usr/bin/env node\n` : ``}import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);` }
       : undefined,
   })
-  const size = fs.statSync(path.join(ROOT, target.out)).size
+  const outfile = path.join(ROOT, target.out)
+  // shebang 只有配上可执行位才有意义
+  if (target.bin)
+    fs.chmodSync(outfile, 0o755)
+  const size = fs.statSync(outfile).size
   console.log(`✓ ${target.label.padEnd(6)} ${target.entry} -> ${target.out}  (${(size / 1024).toFixed(0)} KB)`)
 }

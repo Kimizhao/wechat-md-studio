@@ -19,13 +19,12 @@ import { convertMarkdown } from './renderer'
 import { listThemes } from './themes'
 import { DEFAULT_CODE_THEME, listCodeThemes } from './code-theme'
 import {
-  addDraft,
   credentialsFromEnv,
   describeWeChatError,
   getAccessToken,
   getPublicIp,
-  localizeImages,
-  resolveCoverMediaId,
+  MissingCoverError,
+  pushDraft,
   type WeChatCredentials,
 } from './wechat'
 
@@ -195,50 +194,30 @@ app.post(`/api/wechat/draft`, requireApiKey, async (c) => {
     return c.json({ code: 400, msg: `title 和 markdown 都不能为空`, data: null }, 400)
 
   try {
-    // 1. 先按同一套渲染管线出 HTML（参数与 /api/convert 保持一致，否则预览与草稿会不一致）
-    const rendered = convertMarkdown({
+    // 渲染参数必须和 /api/convert 保持一致，否则预览与草稿会不一致；
+    // 管线细节见 wechat.ts 的 pushDraft（CLI 走的是同一个函数）
+    const result = await pushDraft(cred, {
+      title,
       markdown,
+      author: typeof body.author === `string` ? body.author : undefined,
+      digest: typeof body.digest === `string` ? body.digest : undefined,
+      contentSourceUrl: typeof body.contentSourceUrl === `string` ? body.contentSourceUrl : undefined,
+      coverImageUrl: typeof body.coverImageUrl === `string` ? body.coverImageUrl : undefined,
+      needOpenComment: body.needOpenComment === true,
+      onlyFansCanComment: body.onlyFansCanComment === true,
       theme: typeof body.theme === `string` ? body.theme : undefined,
       fontSize: typeof body.fontSize === `string` ? body.fontSize : undefined,
       backgroundType: typeof body.backgroundType === `string` ? body.backgroundType : undefined,
       codeTheme: typeof body.codeTheme === `string` ? body.codeTheme : undefined,
     })
 
-    // 2. 正文图片换成微信 CDN 地址
-    const { html, uploaded, failed } = await localizeImages(cred, rendered.html)
-
-    // 3. 封面：显式传入优先，否则用正文第一张图
-    const coverUrl = typeof body.coverImageUrl === `string` ? body.coverImageUrl : ``
-    const thumbMediaId = await resolveCoverMediaId(cred, coverUrl, html)
-
-    // 4. 建草稿
-    const mediaId = await addDraft(cred, {
-      title,
-      author: typeof body.author === `string` ? body.author : undefined,
-      digest: typeof body.digest === `string` ? body.digest : undefined,
-      content: html,
-      contentSourceUrl: typeof body.contentSourceUrl === `string` ? body.contentSourceUrl : undefined,
-      thumbMediaId,
-      needOpenComment: body.needOpenComment === true,
-      onlyFansCanComment: body.onlyFansCanComment === true,
-    })
-
-    return c.json({
-      code: 0,
-      msg: `草稿创建成功`,
-      data: {
-        mediaId,
-        uploadedImages: uploaded,
-        failedImages: failed,
-        hasThumb: Boolean(thumbMediaId),
-        wordCount: rendered.wordCount,
-        theme: rendered.theme,
-      },
-    })
+    return c.json({ code: 0, msg: `草稿创建成功`, data: result })
   }
   catch (error) {
     console.error(`[draft] 推送失败:`, error)
-    return c.json({ code: 1, msg: describeWeChatError(error), data: null }, 400)
+    // 封面缺失是「请求缺参数」，不是微信调用失败，给 400 更贴切
+    const code = error instanceof MissingCoverError ? 400 : 1
+    return c.json({ code, msg: describeWeChatError(error), data: null }, 400)
   }
 })
 

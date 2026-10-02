@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "wechat-md": "dist/cli-convert.js"
+  },
   "description": "把 Markdown 渲染成微信公众号可用的全内联样式 HTML：本地编辑器 + Convert API + 草稿推送",
   "keywords": [
     "markdown",
@@ -32,7 +35,8 @@
     "start": "node dist/server.js",
     "serve": "node build.mjs && node dist/server.js",
     "check": "node dist/cli-convert.js --check-all",
-    "themes": "node dist/cli-convert.js --list-themes"
+    "themes": "node dist/cli-convert.js --list-themes",
+    "code-themes": "node dist/cli-convert.js --list-code-themes"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

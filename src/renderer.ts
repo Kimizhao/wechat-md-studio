@@ -18,14 +18,18 @@ import { buildThemeCSS, resolveTheme, type ThemeDefinition } from './themes'
 import { inlineForWeChat } from './inline'
 
 /** 字号档位 -> 实际 px（对齐 md2wechat 的 small/medium/large 三档） */
-const FONT_SIZE_MAP = {
+export const FONT_SIZE_MAP = {
   small: `15px`,
   medium: `16px`,
   large: `17px`,
 } as const
 
 export type FontSizeKey = keyof typeof FONT_SIZE_MAP
-export type BackgroundType = 'default' | 'grid' | 'none'
+
+/** 背景类型；CLI 与接口共用这一份取值清单 */
+export const BACKGROUND_TYPES = [`default`, `grid`, `none`] as const
+
+export type BackgroundType = typeof BACKGROUND_TYPES[number]
 
 export interface ConvertOptions {
   markdown: string

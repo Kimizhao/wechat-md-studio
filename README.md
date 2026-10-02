@@ -35,6 +35,7 @@ pnpm start          # 默认 http://127.0.0.1:8787
 ```bash
 pnpm check          # 回归自检：把 48 套主题全渲染一遍并校验产物合法性
 pnpm themes         # 列出全部主题名
+pnpm code-themes    # 列出全部代码块配色名
 ```
 
 ## 渲染管线
@@ -60,15 +61,29 @@ Markdown
 
 ### 2. 命令行
 
-不需要起服务，适合脚本和 CI：
+不需要起服务，适合脚本和 CI。`package.json` 里注册了 `wechat-md` 这个 bin，
+`pnpm install` 后可以直接敲 `wechat-md`，也可以走全路径 `./dist/cli-convert.js`。
 
 ```bash
-node dist/cli-convert.js article.md --theme bold-blue --font-size large > out.html
-cat article.md | node dist/cli-convert.js --theme focus-green      # stdin -> stdout
-node dist/cli-convert.js article.md --json                          # 结构化输出
+wechat-md article.md --theme bold-blue --font-size large > out.html
+cat article.md | wechat-md --theme focus-green        # stdin -> stdout
+wechat-md article.md --json                           # 结构化输出
+
+wechat-md article.md --draft --title "我的文章"        # 直接推进公众号草稿箱
+wechat-md --list-themes                               # 48 套主题
+wechat-md --list-code-themes                          # 82 套代码配色
+wechat-md --check-all                                 # 回归自检
+wechat-md --help                                      # 完整用法
 ```
 
-参数：`--theme` `--font-size` `--background-type` `--code-theme` `--json`
+参数：`--theme` `--font-size` `--background-type` `--code-theme` `--json`，
+草稿推送再加 `--draft --title --author --digest --cover --source-url --app-id --app-secret`。
+
+**输出约定**：stdout 只放机器可读结果（HTML / JSON / mediaId），摘要和报错走 stderr，
+所以 `> out.html` 和 `MEDIA=$(wechat-md … --draft …)` 都是干净的。
+退出码 `0` 成功 / `1` 运行失败 / `2` 参数有误。
+
+主题名、配色名、字号写错会**直接报错并给出候选**，不会静默回退到默认值。
 
 ### 3. HTTP 接口
 

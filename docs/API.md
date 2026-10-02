@@ -11,6 +11,12 @@ node build.mjs          # 构建（改过源码后需要）
 node dist/server.js     # 启动，默认 http://127.0.0.1:8787
 ```
 
+带上公众号凭证启动（这样编辑器里就不用再输 AppSecret，接口也不必每次传）：
+
+```bash
+WECHAT_APP_ID=wx... WECHAT_APP_SECRET=... node dist/server.js
+```
+
 环境变量：
 
 | 变量 | 默认 | 说明 |
@@ -19,6 +25,8 @@ node dist/server.js     # 启动，默认 http://127.0.0.1:8787
 | `HOST` | `127.0.0.1` | 监听地址。对外提供服务时改 `0.0.0.0` |
 | `MD2WECHAT_API_KEY` | 空 | 设置后 `/api/convert` 与 `/api/wechat/draft` 需要密钥；不设置则本机免鉴权 |
 | `WECHAT_APP_ID` / `WECHAT_APP_SECRET` | 空 | 公众号凭证默认值，请求体里传了就以请求体为准 |
+
+> 凭证只存在于进程内存，本服务**不会**把它写进任何文件。
 
 ## 1. 鉴权
 
@@ -144,8 +152,13 @@ open("out.html", "w", encoding="utf-8").write(
 
 ```json
 { "code": 0, "msg": "success",
-  "data": { "ip": "142.249.39.220", "hint": "把这个 IP 加到「公众号后台 -> 设置与开发 -> 基本配置 -> IP 白名单」后才能推送草稿。" } }
+  "data": { "ip": "1.2.3.4", "hint": "把这个 IP 加到「公众号后台 -> 设置与开发 -> 基本配置 -> IP 白名单」后才能推送草稿。" } }
 ```
+
+> **这个接口用的是国内回显服务（`myip.ipip.net`），不是 `api.ipify.org`。**
+> 原因：微信 API 属于国内域名，在有代理/VPN 的机器上走**直连**，而国外回显服务会走**代理节点**，
+> 两者报出来的 IP 可能差一个洲，照着填白名单必然失败。
+> 仍以微信 `40164` 报错里回显的 IP 为最终准绳。
 
 ## 7. `POST /api/wechat/verify`
 
@@ -168,12 +181,13 @@ curl -s --noproxy '*' -X POST http://127.0.0.1:8787/api/wechat/verify \
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `title` | ✅ | 标题，公众号最多 64 字 |
+| `title` | ✅ | 标题。公众号后台编辑器限 32 字；**接口本身不拦**（实测送 40 字进 `draft/add` 未被截断）。建议按 32 字设计以免后台改标题 |
 | `markdown` | ✅ | 正文 Markdown，服务端自己渲染 |
 | `appId` / `appSecret` |  | 不传则取环境变量 |
-| `author` / `digest` / `contentSourceUrl` | | 作者 / 摘要（留空由微信截取）/ 原文链接 |
-| `coverImageUrl` | | 封面图 URL；留空取正文第一张图 |
-| `theme` / `fontSize` / `backgroundType` / `codeTheme` | | 与 `/api/convert` 完全一致 |
+| `author` / `digest` / `contentSourceUrl` | | 作者(≤16字) / 摘要(≤120字，留空由微信截取) / 原文链接 |
+| `coverImageUrl` | ⚠️ | 封面图 URL；留空则取正文第一张图。**两者都没有会直接返回 400**——微信要求封面必填，不拦就会收到 `40007 invalid media_id` |
+| `needOpenComment` / `onlyFansCanComment` | | 布尔，是否开启评论 / 仅粉丝可评 |
+| `theme` / `fontSize` / `backgroundType` / `codeTheme` | | 与 `/api/convert` 完全一致。**漏传任何一个都会导致草稿与预览不一致** |
 
 **响应 `data`**：
 
@@ -195,29 +209,82 @@ curl -s --noproxy '*' -X POST http://127.0.0.1:8787/api/wechat/draft \
 
 **先决条件**：服务端出网 IP 必须在公众号后台白名单里，否则报 `errcode 40164`（服务会自动翻译成人话返回）。
 
-## 9. 命令行（不起服务也能用）
+**已实测确认的两件事**：
+- 封面用 `type=image` 拿到的 `media_id` **可以直接当 `thumb_media_id` 使用**，不必改用 `type=thumb`（后者限 64KB 且仅 JPG，反而更容易失败）。
+- `thumb_media_id` **必填**。传空串会返 `40007 invalid media_id`，所以服务在调用前就拦下来给中文提示。
 
-适合脚本、CI、以及**没有常驻服务的 agent**。
+## 9. 命令行（不起服务也能用）★ 无状态 agent 首选
+
+适合脚本、CI、以及**没有常驻服务的 agent**。`package.json` 已注册 `wechat-md` 这个 bin，
+也可直接用全路径 `./dist/cli-convert.js`（带 shebang 且可执行）。
 
 ```bash
 # 文件 -> HTML
-node dist/cli-convert.js article.md --theme bold-blue --font-size large > out.html
+wechat-md article.md --theme bold-blue --font-size large > out.html
 
 # stdin -> stdout
-cat article.md | node dist/cli-convert.js --theme focus-green
+cat article.md | wechat-md --theme focus-green
 
 # 结构化输出（含 wordCount / headings）
-node dist/cli-convert.js article.md --json
+wechat-md article.md --json
 
-# 列出全部主题
-node dist/cli-convert.js --list-themes
+# 直接推进公众号草稿箱 —— 不需要服务常驻！
+wechat-md article.md --draft --title "我的文章" --cover https://example.com/cover.png
 
-# 回归自检：把 48 套主题全渲染一遍并校验产物合法性
-node dist/cli-convert.js --check-all
+# 枚举与自检
+wechat-md --list-themes          # 48 套主题
+wechat-md --list-code-themes     # 82 套代码配色
+wechat-md --check-all [文件.md]  # 把每套主题渲染一遍并校验产物合法性
+wechat-md --help                 # 完整用法
+wechat-md --version
 ```
 
-参数：`--theme` `--font-size` `--background-type` `--code-theme` `--json`
-（不带 `--json` 时，统计信息走 stderr，HTML 走 stdout，所以重定向是干净的。）
+### 参数
+
+| 参数 | 说明 |
+| --- | --- |
+| `--theme <name>` | 主题名，默认 `default` |
+| `--font-size <档位>` | `small` / `medium` / `large`，默认 `medium` |
+| `--background-type <类型>` | `default` / `grid` / `none`，默认 `default` |
+| `--code-theme <name>` | 代码块配色，默认用主题自带的 |
+| `--json` | 输出结构化 JSON 而不是 HTML |
+| `--draft` | 渲染并直接调用微信接口建草稿 |
+| `--title` / `--author` / `--digest` / `--source-url` | 草稿元信息（`--title` 在 `--draft` 时必填） |
+| `--cover <图片URL>` | 封面图；留空则取正文第一张图，两者都没有会报错 |
+| `--app-id` / `--app-secret` | 公众号凭证；不传则读 `WECHAT_APP_ID` / `WECHAT_APP_SECRET` |
+| `--` | 之后一律当文件路径（文件名以 `-` 开头时用） |
+| `-h` / `-v` | `--help` / `--version` 的简写 |
+
+支持 `--theme bold-blue` 和 `--theme=bold-blue` 两种写法。
+
+### 输出约定（写脚本必看）
+
+- **stdout 只有机器可读结果**：转换模式是 HTML 或 JSON，`--draft` 模式是 `mediaId`（或 `--json` 时是 JSON）。
+- **人类可读的摘要、警告、报错一律走 stderr**，所以这三种写法都干净：
+
+  ```bash
+  wechat-md a.md > out.html
+  MEDIA=$(wechat-md a.md --draft --title T)
+  wechat-md a.md --json > out.json
+  ```
+
+- **退出码**：`0` 成功 / `1` 运行失败（渲染异常、微信接口报错）/ `2` 参数有误。
+
+### 参数写错不会静默失败
+
+主题名（48 个）、配色名（82 个）、字号、背景这几个参数都会**先校验再执行**，
+拼错时直接退出码 2 并把候选报出来，不再静默回退到默认值：
+
+```console
+$ wechat-md a.md --theme bol-blue
+✗ --theme 的值 "bol-blue" 不认识（是不是想用 bold-blue？）
+  可用值：default bytedance apple sports chinese cyber …（共 48 个）
+
+运行 cli-convert --help 查看用法。
+```
+
+未知选项同理（`--them` → 提示「是不是想用 `--theme`」）；多个问题会**一次性全部列出**，
+不用改一个跑一次。既没给文件、stdin 又不是管道时也不会阻塞等输入，而是直接告诉你怎么用。
 
 ## 10. Agent 怎么用
 
@@ -233,18 +300,32 @@ Agent 的正解是 `/api/wechat/draft`：**Markdown 进，草稿箱出**，全�
 
 | 路径 | 适用 | 代价 |
 | --- | --- | --- |
-| **CLI**（§9） | 一次性转换、不需要常驻进程 | 需能执行子进程；每次调用冷启动约 1–2s |
+| **CLI**（§9） | 一次性转换、不需要常驻进程、无状态 agent | 需能执行子进程；每次调用都是冷启动 |
 | **HTTP**（§5/§8） | 高频调用、多客户端共用 | 需先把服务拉起并保活 |
 | **代码内 import** | 你自己写 Node 工具链 | `import { convertMarkdown } from './src/renderer'`；Python 侧只能走 CLI 或 HTTP |
 | **封成 MCP server** | 让 agent 以结构化工具直接调用 | 需要额外开发 |
 
+> **CLI 冷启动很贵**：每次调用都要重新加载 48 套主题 + 82 份配色 + jsdom/postcss 依赖树。
+> 本机（沙箱内）实测 **单次约 40 秒** —— 根因是沙箱的文件系统代理让每次文件访问约 25ms
+> （实测读 82 个 CSS 共 78KB 耗时 2.2 秒），而 CLI 要发起上千次文件访问，于是被放大约两个数量级。
+> 原生环境应在 1 秒量级。
+> **判据：如果一次任务里要转换/推送多次，用 HTTP 常驻服务；只做一两次就用 CLI。**
+
 ### 推荐给 agent 的最小闭环
+
+**有常驻服务时**（推荐）：
 
 ```
 1. 本地读 Markdown
 2. POST /api/wechat/verify   → 确认凭证可用（可选，但能省掉一次白跑）
 3. POST /api/wechat/draft    → 拿 mediaId
 4. 回报「草稿已创建，去公众号后台草稿箱查看」
+```
+
+**完全不想起服务时**，同一条闭环用 CLI 一条命令完成：
+
+```bash
+MEDIA=$(wechat-md article.md --draft --title "标题" --cover https://example.com/c.png)
 ```
 
 无需 `/api/convert`，也无需浏览器。
@@ -254,20 +335,37 @@ Agent 的正解是 `/api/wechat/draft`：**Markdown 进，草稿箱出**，全�
 ```python
 import json, subprocess
 
-def md_to_wechat_html(markdown: str, theme: str = "default") -> str:
-    """一次子进程调用，无需服务常驻。"""
+CLI = "md2wechat/studio/dist/cli-convert.js"
+
+def _run(args: list[str], markdown: str | None = None) -> str:
     out = subprocess.run(
-        ["node", "dist/cli-convert.js", "--theme", theme, "--json"],
-        input=markdown, capture_output=True, text=True, encoding="utf-8", cwd="md2wechat/studio",
+        [CLI, *args], input=markdown, capture_output=True, text=True, encoding="utf-8",
     )
     if out.returncode != 0:
-        raise RuntimeError(out.stderr)
-    return json.loads(out.stdout)["html"]
+        raise RuntimeError(out.stderr.strip())   # 报错在 stderr，退出码非 0
+    return out.stdout                             # stdout 只有机器可读结果
+
+def md_to_wechat_html(markdown: str, theme: str = "default") -> str:
+    """Markdown -> 微信可用 HTML，一次子进程调用。"""
+    return json.loads(_run(["--theme", theme, "--json"], markdown))["html"]
+
+def push_draft(markdown: str, title: str, cover: str, *, theme: str = "default") -> str:
+    """Markdown -> 公众号草稿，返回 media_id。凭证走 WECHAT_APP_ID / WECHAT_APP_SECRET。"""
+    # 不带 --json 时 stdout 直接就是 media_id 本身
+    return _run(
+        ["--draft", "--title", title, "--cover", cover, "--theme", theme],
+        markdown,
+    ).strip()
+
+def push_draft_verbose(markdown: str, title: str, cover: str) -> dict:
+    """需要上传了几张图、有无失败等细节时，加 --json。"""
+    return json.loads(_run(["--json", "--draft", "--title", title, "--cover", cover], markdown))
 ```
 
 ### 给 agent 的三条注意事项
 
-1. **`code` 才是成败判据**，HTTP 200 也可能是 `code: 400`。别只看状态码。
+1. **成败判据分两种**：走 HTTP 时看响应体的 `code`（HTTP 200 也可能是 `code: 400`，别只看状态码）；
+   走 CLI 时看**退出码**（`0` 成功 / `1` 运行失败 / `2` 参数有误），报错内容在 stderr。
 2. **40164 ≠ 代码问题**，是 IP 白名单没配。遇到就把「本机公网 IP」（§6）报给用户，别重试。
 3. **正文图上传失败不阻断**（返回在 `failedImages` 里）。草稿建好了要如实说明哪几张图没传上去。
 
@@ -285,4 +383,11 @@ def md_to_wechat_html(markdown: str, theme: str = "default") -> str:
 ## 12. 本机调试注意
 
 - 本机有 HTTP 代理劫持，`curl` 访问 localhost 要加 `--noproxy '*'`，Python 要用 `ProxyHandler({})`。
-- 服务刚启动有 1–2 秒空窗（要在模块加载期读 48 套主题），此时探测会失败，隔一会儿重试即可。
+- **服务冷启动较慢**：模块加载期要读 48 套主题，本机实测 **45 秒以上**（沙箱文件系统代理会明显放大，正常环境应更快）。这段空窗里探测会全部失败、`lsof` 也看不到监听 —— **别误判成代码坏了**。用轮询探活再开始测试：
+
+  ```bash
+  for i in $(seq 1 30); do
+    [ "$(curl -s --noproxy '*' -o /dev/null -m 3 -w '%{http_code}' http://127.0.0.1:8787/api/themes)" = "200" ] && break
+    sleep 2
+  done
+  ```

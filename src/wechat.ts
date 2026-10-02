@@ -12,6 +12,7 @@
  *  2. access_token 全局唯一且有频次限制，必须缓存复用（这里缓存到过期前 5 分钟）。
  */
 import process from 'node:process'
+import { convertMarkdown } from './renderer'
 
 const API_BASE = `https://api.weixin.qq.com/cgi-bin`
 
@@ -257,11 +258,18 @@ export async function resolveCoverMediaId(
   return uploadThumbMaterial(cred, data, filename)
 }
 
-/** 出口 IP 查询，方便用户往公众号后台加白名单 */
+/**
+ * 出口 IP 查询，方便用户往公众号后台加白名单。
+ *
+ * 必须用「国内」回显服务：微信 API 属于国内域名，在有代理/VPN 的机器上走直连，
+ * 而 api.ipify.org 这类国外服务会走代理节点，报出来的 IP 和微信看到的不是同一个，
+ * 会把用户引导到填错白名单（实测同一台机器上两者差了一个洲）。
+ */
 export async function getPublicIp(): Promise<string | undefined> {
   try {
-    const response = await fetch(`https://api.ipify.org`, { signal: AbortSignal.timeout(5000) })
-    return (await response.text()).trim()
+    const response = await fetch(`https://myip.ipip.net`, { signal: AbortSignal.timeout(5000) })
+    const match = (await response.text()).match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)
+    return match ? match[0] : undefined
   }
   catch {
     return undefined
@@ -283,4 +291,85 @@ export function credentialsFromEnv(): WeChatCredentials | undefined {
   if (appId && appSecret)
     return { appId, appSecret }
   return undefined
+}
+
+/* ------------------------------------------------------------------ */
+/* 一步到草稿箱                                                         */
+/* ------------------------------------------------------------------ */
+
+/** 缺封面时的专用错误：微信要求每条图文必须有封面，提前拦下给能照做的提示 */
+export class MissingCoverError extends Error {
+  constructor() {
+    super(`缺少封面：公众号要求每条图文必须有封面图。请显式指定封面图，或让正文至少包含一张图片。`)
+    this.name = `MissingCoverError`
+  }
+}
+
+export interface DraftRequest {
+  title: string
+  markdown: string
+  author?: string
+  digest?: string
+  contentSourceUrl?: string
+  coverImageUrl?: string
+  needOpenComment?: boolean
+  onlyFansCanComment?: boolean
+  /** 以下四个必须与调用方预览时用的完全一致，否则草稿和预览会长得不一样 */
+  theme?: string
+  fontSize?: string
+  backgroundType?: string
+  codeTheme?: string
+}
+
+export interface DraftResult {
+  mediaId: string
+  uploadedImages: number
+  failedImages: string[]
+  hasThumb: boolean
+  wordCount: number
+  theme: string
+}
+
+/**
+ * 「Markdown 进、草稿箱出」的完整管线。
+ * 服务端路由和命令行工具都走这里，保证两条路径不会跑偏。
+ */
+export async function pushDraft(cred: WeChatCredentials, req: DraftRequest): Promise<DraftResult> {
+  // 1. 渲染成微信可用的全内联 HTML
+  const rendered = convertMarkdown({
+    markdown: req.markdown,
+    theme: req.theme,
+    fontSize: req.fontSize,
+    backgroundType: req.backgroundType,
+    codeTheme: req.codeTheme,
+  })
+
+  // 2. 正文图片换成微信 CDN 地址
+  const { html, uploaded, failed } = await localizeImages(cred, rendered.html)
+
+  // 3. 封面：显式传入优先，否则取正文第一张图
+  const thumbMediaId = await resolveCoverMediaId(cred, req.coverImageUrl ?? ``, html)
+  if (!thumbMediaId)
+    throw new MissingCoverError()
+
+  // 4. 建草稿
+  const mediaId = await addDraft(cred, {
+    title: req.title,
+    author: req.author,
+    digest: req.digest,
+    content: html,
+    contentSourceUrl: req.contentSourceUrl,
+    thumbMediaId,
+    needOpenComment: req.needOpenComment,
+    onlyFansCanComment: req.onlyFansCanComment,
+  })
+
+  return {
+    mediaId,
+    uploadedImages: uploaded,
+    failedImages: failed,
+    hasThumb: true,
+    wordCount: rendered.wordCount,
+    theme: rendered.theme,
+  }
 }
