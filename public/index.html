@@ -92,6 +92,13 @@
   .actions button:hover { background: #f3f5f8; }
   .actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .actions button.primary:hover { background: #2f5fe0; }
+  .actions .apikey {
+    width: 136px; padding: 6px 9px; font: inherit; font-size: 12.5px;
+    color: inherit; background: #fff;
+    border: 1px solid var(--border); border-radius: 6px; outline: none;
+  }
+  .actions .apikey:focus { border-color: var(--accent); }
+  .actions .apikey::placeholder { color: #b0b8c4; }
   button:disabled { opacity: .55; cursor: not-allowed; }
 
   /* ---------- 主体 ---------- */
@@ -271,6 +278,8 @@
   </nav>
 
   <div class="actions">
+    <input id="apiKey" class="apikey" type="password" autocomplete="off" placeholder="服务密钥"
+           title="服务开启鉴权后必填（MD2WECHAT_API_KEY）。只存在本机浏览器，不会上传到别处。">
     <button id="btnCopy" type="button">复制</button>
     <button id="btnDraft" type="button" class="primary">发布</button>
   </div>
@@ -393,6 +402,16 @@ function toast(message, isError) {
 }
 
 function setStatus(text) { $('statStatus').textContent = text }
+
+/* ---------- 鉴权 ---------- */
+// 服务端设了 MD2WECHAT_API_KEY 时，/api/convert 与 /api/wechat/draft 都必须带密钥
+// （/api/themes、/api/code-themes、/api/wechat/ip 是只读接口，免鉴权）
+function authHeaders() {
+  const key = $('apiKey').value.trim()
+  const headers = { 'Content-Type': 'application/json' }
+  if (key) headers['X-API-Key'] = key
+  return headers
+}
 
 /* ---------- 菜单栏 ---------- */
 let openMenu = null
@@ -591,6 +610,7 @@ function persist() {
     codeTheme: $('codeTheme').value,
     appId: $('dAppId').value,
     author: $('dAuthor').value,
+    apiKey: $('apiKey').value,
   }))
 }
 function restore() {
@@ -602,6 +622,7 @@ function restore() {
   if (saved.codeTheme) $('codeTheme').value = saved.codeTheme
   if (saved.appId) $('dAppId').value = saved.appId
   if (saved.author) $('dAuthor').value = saved.author
+  if (saved.apiKey) $('apiKey').value = saved.apiKey
   return saved
 }
 
@@ -631,9 +652,10 @@ async function render() {
   try {
     const response = await fetch('/api/convert', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(body),
     })
+    if (response.status === 401) throw new Error('服务已开启密钥鉴权，请在右上角填写「服务密钥」')
     const payload = await response.json()
     if (payload.code !== 0) throw new Error(payload.msg)
 
@@ -669,22 +691,60 @@ function paintPreview(html, meta) {
 }
 
 /* ---------- 复制到公众号 ---------- */
+
+/**
+ * Clipboard API 只在「安全上下文」（https / localhost）下存在。服务部署到公网后
+ * 用 http://<ip>:<port>/ 访问时 navigator.clipboard 是 undefined —— 此时必须退回
+ * execCommand，它同样能把 text/html 写进剪贴板，粘到公众号仍保留排版。
+ *
+ * 注意：execCommand 必须在用户手势的同步调用栈里执行，所以这个函数保持同步、不 await。
+ */
+function copyViaExecCommand(html) {
+  const host = document.createElement('div')
+  host.contentEditable = 'true'
+  host.innerHTML = html
+  // 不能用 display:none / visibility:hidden —— 那样选区取不到内容；
+  // 挪到视口外即可，页面上不会有任何跳动。
+  host.style.cssText = 'position:fixed;left:-9999px;top:0;'
+  document.body.appendChild(host)
+
+  const selection = window.getSelection()
+  const range = document.createRange()
+  range.selectNodeContents(host)
+  selection.removeAllRanges()
+  selection.addRange(range)
+
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } catch {
+    ok = false
+  }
+
+  selection.removeAllRanges()
+  document.body.removeChild(host)
+  return ok
+}
+
 async function copyToWeChat() {
   if (!currentHtml) return toast('还没有可复制的内容', true)
-  const htmlBlob = new Blob([currentHtml], { type: 'text/html' })
-  const textBlob = new Blob([currentPlain], { type: 'text/plain' })
-  try {
-    await navigator.clipboard.write([new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob })])
-    toast('已复制，去公众号后台粘贴即可保留排版')
-  } catch (error) {
-    // 降级：浏览器不支持写入 text/html 时退回纯文本
+
+  // 安全上下文：走标准 API，能同时写入 text/html + text/plain
+  if (navigator.clipboard && window.ClipboardItem) {
+    const htmlBlob = new Blob([currentHtml], { type: 'text/html' })
+    const textBlob = new Blob([currentPlain], { type: 'text/plain' })
     try {
-      await navigator.clipboard.writeText(currentPlain)
-      toast('当前浏览器不支持富文本复制，已复制纯文本', true)
+      await navigator.clipboard.write([new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob })])
+      return toast('已复制，去公众号后台粘贴即可保留排版')
     } catch {
-      toast(`复制失败：${error.message}`, true)
+      // 例如浏览器不支持写入 text/html，落到下面的兜底
     }
   }
+
+  if (copyViaExecCommand(currentHtml))
+    return toast('已复制（兼容模式），去公众号后台粘贴即可保留排版')
+
+  toast('复制失败：浏览器拒绝写入剪贴板。用 http 访问公网地址时属正常限制 —— 可在预览区手动全选复制，或改用 https 访问。', true)
 }
 
 /* ---------- 推送草稿 ---------- */
@@ -718,9 +778,10 @@ async function submitDraft() {
   try {
     const response = await fetch('/api/wechat/draft', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(payload),
     })
+    if (response.status === 401) throw new Error('服务已开启密钥鉴权，请在右上角填写「服务密钥」')
     const result = await response.json()
     if (result.code !== 0) throw new Error(result.msg)
     const data = result.data
@@ -750,6 +811,7 @@ for (const id of ['theme', 'fontSize', 'background', 'codeTheme'])
   $(id).addEventListener('change', render)
 for (const id of ['dAppId', 'dAuthor'])
   $(id).addEventListener('change', persist)
+$('apiKey').addEventListener('change', () => { persist(); render() })
 
 // ⌘/Ctrl + S 复制到公众号
 document.addEventListener('keydown', (event) => {
